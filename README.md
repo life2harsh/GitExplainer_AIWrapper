@@ -1,38 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Repo Browser
+
+A minimalist GitHub repository browser with AI-powered code annotations. Analyze any public repository and get intelligent insights about the code structure and functionality.
+
+## Features
+
+- **Repository Analysis**: Paste any GitHub repository URL to browse its contents
+- **AI Annotations**: Automatically generated code explanations for each file
+- **Language Detection**: Identifies programming languages used across the repository
+- **File Filtering**: Excludes binary files and focuses on analyzable code
+- **Caching System**: Stores analyzed repositories for instant re-access
+- **Repository Summaries**: Generate concise overviews of entire projects
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- Node.js 16.x or higher
+- OpenRouter API key
+- GitHub personal access token (optional, for higher rate limits)
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/life2harsh/GitExplainer_AIWrapper.git
+cd GitExplainer_AIWrapper
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Create a `.env` file in the root directory:
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+GITHUB_TOKEN=your_github_token_here
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Start the development server:
+```bash
+npm run dev
+```
 
-## Learn More
+5. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-To learn more about Next.js, take a look at the following resources:
+## Usage
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Paste a GitHub repository URL into the input field
+2. Click "Analyze Repo" to fetch and analyze the repository
+3. Browse files from the sidebar
+4. View AI-generated annotations alongside the code
+5. Use the "Summarize Repo" button for a quick project overview
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Technology Stack
 
-## Deploy on Vercel
+- **Framework**: Next.js 16.1.1 with React
+- **Language**: TypeScript
+- **AI Provider**: OpenRouter API (using kat-coder-pro model)
+- **Syntax Highlighting**: react-syntax-highlighter
+- **Styling**: Tailwind CSS
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## API Routes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# GitExplainer_AIWrapper
-an AI Wrapper written in JS, to explain code posted on github, paste the code link (not the repo link)
+- `/api/repo` - Fetches repository contents and generates batch annotations
+- `/api/annotate` - Generates annotations for individual files
+- `/api/summarize` - Creates repository summaries
+
+## Configuration
+
+The application uses the following environment variables:
+
+- `OPENROUTER_API_KEY` - Required for AI-powered annotations
+- `GITHUB_TOKEN` - Optional, improves GitHub API rate limits
+
+## License
+
+This project is open source and available under the MIT License.
+
+## Contributing
+
+Contributions are welcome. Please feel free to submit issues or pull requests.
+
