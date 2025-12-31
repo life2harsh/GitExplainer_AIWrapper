@@ -1,14 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import ReactMarkdown from 'react-markdown';
+import CodeQuestionModal from "@/components/CodeQuestionModal";
 
 interface Annotation {
   lineStart: number;
   lineEnd: number;
   annotation: string;
   type: "info" | "function" | "class" | "important" | "warning";
+}
+
+interface SelectionData {
+  text: string;
+  lineStart: number;
+  lineEnd: number;
 }
 
 interface FileItem {
@@ -36,7 +44,7 @@ interface RepoData {
   fromCache?: boolean;
 }
 
-export default function Home() {
+export default function CodeViewer() {
   const [repoUrl, setRepoUrl] = useState("");
   const [repoData, setRepoData] = useState<RepoData | null>(null);
   const [loadingRepo, setLoadingRepo] = useState(false);
@@ -49,6 +57,80 @@ export default function Home() {
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [repoSummary, setRepoSummary] = useState("");
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [questionModalOpen, setQuestionModalOpen] = useState(false);
+  const [generalChatOpen, setGeneralChatOpen] = useState(false);
+  const [generalChatMessages, setGeneralChatMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([]);
+  const [generalChatInput, setGeneralChatInput] = useState("");
+  const [generalChatLoading, setGeneralChatLoading] = useState(false);
+  const [selection, setSelection] = useState<SelectionData | null>(null);
+  const [showSelectionButton, setShowSelectionButton] = useState(false);
+  const questionModalOpenRef = useRef(questionModalOpen);
+  const isHoveringButtonRef = useRef(false);
+  const codeContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    questionModalOpenRef.current = questionModalOpen;
+  }, [questionModalOpen]);
+
+  useEffect(() => {
+    if (!fileContent) return;
+
+    let rafId: number | null = null;
+
+    const handleSelection = (e: MouseEvent) => {
+      if (questionModalOpenRef.current || isHoveringButtonRef.current) return;
+      if (rafId) cancelAnimationFrame(rafId);
+
+      rafId = requestAnimationFrame(() => {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        
+        const selectedText = sel.toString();
+        if (!selectedText || selectedText.trim().length <= 3) {
+          setSelection(null);
+          setShowSelectionButton(false);
+          return;
+        }
+
+        if (!codeContainerRef.current) return;
+        const target = e.target as Node;
+        if (!codeContainerRef.current.contains(target)) return;
+
+        const trimmed = selectedText.trim();
+        let lineStart = 1;
+        let lineEnd = 1;
+        
+        try {
+          const range = sel.getRangeAt(0);
+          const preCaretRange = range.cloneRange();
+          preCaretRange.selectNodeContents(codeContainerRef.current);
+          preCaretRange.setEnd(range.startContainer, range.startOffset);
+          const textBefore = preCaretRange.toString();
+          let count = 0;
+          for (let i = 0; i < textBefore.length; i++) {
+            if (textBefore[i] === '\n') count++;
+          }
+          lineStart = count + 1;
+          let selCount = 0;
+          for (let i = 0; i < trimmed.length; i++) {
+            if (trimmed[i] === '\n') selCount++;
+          }
+          lineEnd = lineStart + selCount;
+        } catch {
+          lineEnd = lineStart;
+        }
+
+        setSelection({ text: trimmed, lineStart, lineEnd });
+        setShowSelectionButton(true);
+      });
+    };
+
+    document.addEventListener('mouseup', handleSelection);
+    return () => {
+      document.removeEventListener('mouseup', handleSelection);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [fileContent]);
 
   const handleLoadRepo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,18 +159,16 @@ export default function Home() {
 
   const handleFileClick = async (filePath: string) => {
     if (!repoData) return;
-    
     setSelectedFile(filePath);
     setFileContent("");
     setAnnotations([]);
     setActiveAnnotation(null);
     setLoadingFile(true);
-
     try {
-      if (repoData.fileContents[filePath]) {
+      if (repoData.fileContents && repoData.fileContents[filePath]) {
         setFileContent(repoData.fileContents[filePath]);
         
-        if (repoData.annotations[filePath]) {
+        if (repoData.annotations && repoData.annotations[filePath]) {
           setAnnotations(repoData.annotations[filePath]);
         } else {
           const res = await fetch("/api/annotate", {
@@ -161,19 +241,39 @@ export default function Home() {
     return colors[type as keyof typeof colors] || colors.info;
   };
 
-  const filteredFiles = repoData?.files.filter(f => 
-    f.path.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+  const filteredFiles = useMemo(() => {
+    if (!repoData?.files) return [];
+    const term = searchTerm.toLowerCase();
+    return repoData.files.filter(f => f.path.toLowerCase().includes(term));
+  }, [repoData?.files, searchTerm]);
 
-  const getFileIcon = (path: string) => {
+  const iconMap: Record<string, string> = {
+    js: "/icons/js.jpg",
+    jsx: "/icons/react.png",
+    ts: "/icons/typescript.png",
+    tsx: "/icons/react.png",
+    py: "/icons/python.png",
+    java: "/icons/java.png",
+    cpp: "/icons/cpp.png",
+    c: "/icons/c.png",
+    cs: "/icons/csharp.png",
+    go: "/icons/go.png",
+    rs: "/icons/rust.png",
+    php: "/icons/php.png",
+    r: "/icons/r.png",
+    swift: "/icons/swift.png",
+    html: "/icons/html.png",
+    css: "/icons/css.png",
+    json: "/icons/json.png",
+    md: "/icons/md.png",
+    yml: "/icons/yaml.png",
+    yaml: "/icons/yaml.png",
+    env: "/icons/env.png",
+  };
+
+  const getFileIconPath = (path: string) => {
     const ext = path.split('.').pop()?.toLowerCase();
-    const icons: Record<string, string> = {
-      js: "📜", jsx: "⚛️", ts: "📘", tsx: "⚛️",
-      py: "🐍", java: "☕", cpp: "⚙️", c: "⚙️",
-      html: "🌐", css: "🎨", json: "📋", md: "📝",
-      yml: "⚙️", yaml: "⚙️", env: "🔑",
-    };
-    return icons[ext || ""] || "📄";
+    return iconMap[ext || ""] || "/icons/generic.png";
   };
 
   const getLanguage = (path: string) => {
@@ -186,8 +286,77 @@ export default function Home() {
       html: "html", css: "css", json: "json", md: "markdown",
       yml: "yaml", yaml: "yaml", sh: "bash",
     };
-    return langMap[ext || ""] || "javascript";
+    return langMap[ext || ""] || "text";
   };
+
+  const handleGeneralChat = async () => {
+    if (!generalChatInput.trim() || generalChatLoading) return;
+
+    const userMessage = generalChatInput.trim();
+    setGeneralChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setGeneralChatInput("");
+    setGeneralChatLoading(true);
+
+    try {
+      let contextMessage = userMessage;
+      if (repoData) {
+        contextMessage = `[Repository: ${repoData.owner}/${repoData.repo}]
+[Description: ${repoData.description || 'No description'}]
+[Languages: ${repoData.analysis.languages.map(l => `${l.name} (${l.percentage})`).join(', ')}]
+${selectedFile ? `[Current file: ${selectedFile}]` : ''}
+${fileContent ? `[File preview (first 2000 chars):\n\`\`\`\n${fileContent.slice(0, 2000)}\n\`\`\`]` : ''}
+
+Question: ${userMessage}`;
+      }
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: contextMessage,
+          analysisDepth: "standard",
+        }),
+      });
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      
+      setGeneralChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+    } catch {
+      setGeneralChatMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I encountered an error. Please try again." }]);
+    } finally {
+      setGeneralChatLoading(false);
+    }
+  };
+
+  const annotationMap = useMemo(() => {
+    const map = new Map<number, number>();
+    annotations.forEach((a, idx) => {
+      for (let line = a.lineStart; line <= a.lineEnd; line++) {
+        map.set(line, idx);
+      }
+    });
+    return map;
+  }, [annotations]);
+
+  const linePropsCallback = useCallback((lineNumber: number) => {
+    const annIdx = annotationMap.get(lineNumber);
+    const hasAnnotation = annIdx !== undefined;
+    const isActive = hasAnnotation && activeAnnotation === annIdx;
+    
+    if (!hasAnnotation) {
+      return { style: { display: 'block' } };
+    }
+    
+    return {
+      style: {
+        display: 'block',
+        backgroundColor: isActive ? 'rgba(168, 85, 247, 0.1)' : 'rgba(168, 85, 247, 0.05)',
+        borderLeft: '2px solid rgb(168, 85, 247)',
+        paddingLeft: '0.5rem',
+      },
+    };
+  }, [annotationMap, activeAnnotation]);
 
   return (
     <div className="min-h-screen bg-black">
@@ -213,7 +382,7 @@ export default function Home() {
                 disabled={loadingRepo || !repoUrl.trim()}
                 className="px-6 py-3 bg-black hover:bg-white/5 disabled:bg-black/50 border border-white/20 text-white font-semibold rounded-lg transition-all disabled:cursor-not-allowed disabled:text-slate-600"
               >
-                {loadingRepo ? "Loading..." : "Analyze Repo"}
+                {loadingRepo ? "Loading..." : "Load Repo"}
               </button>
             </div>
           </div>
@@ -230,19 +399,21 @@ export default function Home() {
                   )}
                   <div className="flex gap-4 text-sm text-slate-300">
                     <span>{repoData.files.length} files</span>
-                    {repoData.fromCache && <span className="text-green-400">⚡ From Cache</span>}
+                    {repoData.fromCache && <span className="text-green-400">From Cache</span>}
                   </div>
                   
-                  <div className="mt-4">
-                    <h3 className="text-white font-semibold mb-2">Languages</h3>
-                    <div className="flex gap-2 flex-wrap">
-                      {repoData.analysis.languages.slice(0, 5).map(lang => (
-                        <span key={lang.name} className="px-3 py-1 bg-black border border-white/20 text-white rounded-full text-sm">
-                          {lang.name} ({lang.percentage}%)
-                        </span>
-                      ))}
+                  {repoData.analysis && (
+                    <div className="mt-4">
+                      <h3 className="text-white font-semibold mb-2">Languages</h3>
+                      <div className="flex gap-2 flex-wrap">
+                        {repoData.analysis.languages.slice(0, 5).map(lang => (
+                          <span key={lang.name} className="px-3 py-1 bg-black border border-white/20 text-white rounded-full text-sm">
+                            {lang.name} ({lang.percentage}%)
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
                 
                 <button
@@ -281,7 +452,7 @@ export default function Home() {
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <span>{getFileIcon(file.path)}</span>
+                          <img src={getFileIconPath(file.path)} alt="" className="w-4 h-4 object-contain" />
                           <span className="text-sm text-white font-mono truncate">{file.path}</span>
                         </div>
                         <div className="text-xs text-slate-400 ml-6">{(file.size / 1024).toFixed(1)} KB</div>
@@ -293,8 +464,8 @@ export default function Home() {
 
               <div className="lg:col-span-3">
                 {loadingFile ? (
-                  <div className="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 p-12 flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
+                  <div className="bg-black rounded-xl border border-white/20 p-12 flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
                   </div>
                 ) : selectedFile && fileContent ? (
                   <div className="bg-black rounded-xl border border-white/20 overflow-hidden">
@@ -303,20 +474,22 @@ export default function Home() {
                     </div>
 
                     <div className="grid lg:grid-cols-2 gap-0">
-                      <div className="border-r border-white/20">
+                      <div className="border-r border-white/20 flex flex-col">
                         <div className="bg-black px-3 py-2 border-b border-white/20">
                           <span className="text-slate-400 text-xs font-semibold uppercase">Code</span>
                         </div>
-                        <div className="overflow-auto max-h-[70vh]">
+                        <div ref={codeContainerRef} className="overflow-x-auto overflow-y-auto max-h-[70vh] code-selection">
                           <SyntaxHighlighter
                             language={getLanguage(selectedFile)}
                             style={vscDarkPlus}
                             showLineNumbers={true}
+                            wrapLongLines={false}
                             customStyle={{
                               margin: 0,
                               padding: '1rem',
                               background: 'transparent',
                               fontSize: '0.875rem',
+                              minWidth: 'max-content',
                             }}
                             lineNumberStyle={{
                               minWidth: '3em',
@@ -325,33 +498,7 @@ export default function Home() {
                               userSelect: 'none',
                             }}
                             wrapLines={true}
-                            lineProps={(lineNumber) => {
-                              const hasAnnotation = annotations.find(
-                                (a) => lineNumber >= a.lineStart && lineNumber <= a.lineEnd
-                              );
-                              const activeAnn = activeAnnotation !== null && annotations[activeAnnotation];
-                              const isActive = activeAnn && 
-                                lineNumber >= activeAnn.lineStart && 
-                                lineNumber <= activeAnn.lineEnd;
-                              
-                              return {
-                                style: {
-                                  display: 'block',
-                                  backgroundColor: isActive ? 'rgba(168, 85, 247, 0.1)' : 
-                                                  hasAnnotation ? 'rgba(168, 85, 247, 0.05)' : 'transparent',
-                                  borderLeft: hasAnnotation ? '2px solid rgb(168, 85, 247)' : 'none',
-                                  paddingLeft: hasAnnotation ? '0.5rem' : '0',
-                                },
-                                onMouseEnter: () => {
-                                  if (hasAnnotation) {
-                                    const annIdx = annotations.findIndex(
-                                      (a) => lineNumber >= a.lineStart && lineNumber <= a.lineEnd
-                                    );
-                                    setActiveAnnotation(annIdx);
-                                  }
-                                },
-                              };
-                            }}
+                            lineProps={linePropsCallback}
                           >
                             {fileContent}
                           </SyntaxHighlighter>
@@ -441,6 +588,156 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {selectedFile && fileContent && showSelectionButton && selection && (
+        <div 
+          style={{ position: 'fixed', bottom: '32px', right: '32px', zIndex: 99999 }}
+          onMouseEnter={() => isHoveringButtonRef.current = true}
+          onMouseLeave={() => isHoveringButtonRef.current = false}
+        >
+          <div style={{ backgroundColor: '#000000' }} className="text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-white/20">
+            <span className="text-sm text-slate-400">Lines {selection.lineStart}-{selection.lineEnd}</span>
+            <button
+              onClick={() => setQuestionModalOpen(true)}
+              style={{ backgroundColor: '#ffffff', color: '#000000' }}
+              className="px-4 py-2 hover:bg-slate-200 rounded-lg font-semibold transition-all"
+            >
+              Ask AI
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selection && (
+        <CodeQuestionModal
+          isOpen={questionModalOpen}
+          onClose={() => {
+            setQuestionModalOpen(false);
+            setSelection(null);
+            setShowSelectionButton(false);
+            window.getSelection()?.removeAllRanges();
+          }}
+          selectedCode={selection.text}
+          lineStart={selection.lineStart}
+          lineEnd={selection.lineEnd}
+          fileName={selectedFile || ""}
+          language={selectedFile ? getLanguage(selectedFile) : "javascript"}
+        />
+      )}
+
+      {}
+      {repoData && !showSelectionButton && (
+        <button
+          onClick={() => setGeneralChatOpen(true)}
+          style={{ position: 'fixed', bottom: '32px', right: '32px', zIndex: 99998 }}
+          className="bg-white text-black px-5 py-3 rounded-xl shadow-2xl font-semibold hover:bg-slate-200 transition-all flex items-center gap-2"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+          </svg>
+          Ask AI
+        </button>
+      )}
+
+      {}
+      {generalChatOpen && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-black rounded-xl w-full max-w-2xl max-h-[80vh] overflow-hidden border border-white/20 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-white/20">
+              <div>
+                <h2 className="text-xl font-bold text-white">Ask AI</h2>
+                <p className="text-sm text-slate-400">
+                  {repoData ? `${repoData.owner}/${repoData.repo}` : 'Chat about the code'}
+                  {selectedFile && ` • ${selectedFile}`}
+                </p>
+              </div>
+              <button
+                onClick={() => setGeneralChatOpen(false)}
+                className="text-slate-400 hover:text-white transition-colors p-2"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[300px]">
+              {generalChatMessages.length === 0 ? (
+                <div className="text-center text-slate-400 py-8">
+                  <p className="mb-4">Ask anything about this repository or code</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {[
+                      "What does this project do?",
+                      "What are the main files?",
+                      "Explain the architecture",
+                      "What technologies are used?"
+                    ].map((q, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setGeneralChatInput(q);
+                        }}
+                        className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/20 rounded-lg text-sm text-slate-300 transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                generalChatMessages.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-lg ${
+                      msg.role === 'user' 
+                        ? 'bg-white/10 ml-8' 
+                        : 'bg-white/5 mr-8'
+                    }`}
+                  >
+                    <div className="text-xs text-slate-400 mb-1">
+                      {msg.role === 'user' ? 'You' : 'AI'}
+                    </div>
+                    {msg.role === 'user' ? (
+                      <div className="text-white text-sm whitespace-pre-wrap">{msg.content}</div>
+                    ) : (
+                      <div className="text-white text-sm prose prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-pre:border prose-pre:border-white/10 prose-code:text-purple-300 prose-headings:text-white prose-strong:text-white prose-table:text-sm prose-th:border prose-th:border-white/20 prose-th:p-2 prose-td:border prose-td:border-white/20 prose-td:p-2">
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+              {generalChatLoading && (
+                <div className="flex items-center gap-2 text-slate-400 p-3">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  <span>Thinking...</span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-white/20">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={generalChatInput}
+                  onChange={(e) => setGeneralChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleGeneralChat()}
+                  placeholder="Ask about the code..."
+                  className="flex-1 px-4 py-2 bg-black border border-white/20 rounded-lg text-white placeholder-slate-600 focus:outline-none focus:border-white/40"
+                  disabled={generalChatLoading}
+                />
+                <button
+                  onClick={handleGeneralChat}
+                  disabled={generalChatLoading || !generalChatInput.trim()}
+                  className="px-4 py-2 bg-white text-black rounded-lg font-semibold hover:bg-slate-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

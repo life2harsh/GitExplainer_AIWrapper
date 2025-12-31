@@ -3,7 +3,7 @@ import { isAnalyzableFile, analyzeRepoLanguages } from '../../../lib/fileFilter.
 
 async function generateAnnotations(content, fileName) {
   try {
-    const maxChars = 100000;
+    const maxChars = 150000;
     const truncated = content.length > maxChars ? content.slice(0, maxChars) : content;
     const lineCount = truncated.split('\n').length;
     
@@ -16,34 +16,53 @@ async function generateAnnotations(content, fileName) {
         "X-Title": "AI Code Analyzer",
       },
       body: JSON.stringify({
-        model: "kwaipilot/kat-coder-pro:free",
+        model: "mistralai/devstral-2512:free",
         messages: [
           {
             role: "user",
-            content: `Analyze this ${lineCount}-line file and create annotations covering the ENTIRE file from line 1 to ${lineCount}.
+            content: `You are an expert code analyzer. Analyze this ${lineCount}-line file and create 20-25 high-quality annotations that cover the ENTIRE file from start to finish.
 
-CRITICAL: You MUST create at least 15-20 annotations distributed across:
-- Beginning (lines 1-${Math.floor(lineCount*0.2)})
-- Early-Mid (lines ${Math.floor(lineCount*0.2)}-${Math.floor(lineCount*0.4)})
-- Middle (lines ${Math.floor(lineCount*0.4)}-${Math.floor(lineCount*0.6)})
-- Late-Mid (lines ${Math.floor(lineCount*0.6)}-${Math.floor(lineCount*0.8)})
-- End (lines ${Math.floor(lineCount*0.8)}-${lineCount})
+CRITICAL REQUIREMENTS:
+1. You MUST analyze ALL ${lineCount} lines
+2. Create at least 4 annotations in EACH of these sections:
+   
+   SECTION 1 (File Start): Lines 1 to ${Math.floor(lineCount*0.2)}
+   SECTION 2 (Early): Lines ${Math.floor(lineCount*0.2)+1} to ${Math.floor(lineCount*0.4)}
+   SECTION 3 (Middle): Lines ${Math.floor(lineCount*0.4)+1} to ${Math.floor(lineCount*0.6)}
+   SECTION 4 (Late): Lines ${Math.floor(lineCount*0.6)+1} to ${Math.floor(lineCount*0.8)}
+   SECTION 5 (File End): Lines ${Math.floor(lineCount*0.8)+1} to ${lineCount}
+
+3. Your FINAL annotation must be within lines ${Math.floor(lineCount*0.85)} to ${lineCount}
+4. Ensure complete file coverage
 
 File: ${fileName}
+Total Lines: ${lineCount}
 
 \`\`\`
 ${truncated}
 \`\`\`
 
-Return ONLY a JSON array. NO OTHER TEXT.
-[{"lineStart":1,"lineEnd":5,"annotation":"Brief description","type":"info"}]
-Types: "info", "function", "class", "important", "warning"
+OUTPUT FORMAT:
+Return ONLY a valid JSON array. No markdown, no explanations, just the JSON array:
 
-PROVIDE 15-20 ANNOTATIONS COVERING ALL SECTIONS!`
+[
+  {"lineStart": 1, "lineEnd": 5, "annotation": "Brief meaningful description", "type": "info"},
+  {"lineStart": 10, "lineEnd": 15, "annotation": "Another annotation", "type": "function"}
+]
+
+ANNOTATION TYPES (choose appropriately):
+- "info": General information, explanations
+- "function": Function definitions and implementations
+- "class": Class definitions and structures
+- "important": Critical logic, key algorithms
+- "warning": Potential issues, edge cases, security concerns
+
+Generate the annotations now:`
           }
         ],
-        temperature: 0.3,
-        max_tokens: 4000
+        temperature: 0.15,
+        max_tokens: 8000,
+        top_p: 0.95
       })
     });
 
@@ -51,16 +70,15 @@ PROVIDE 15-20 ANNOTATIONS COVERING ALL SECTIONS!`
     
     if (!response.ok || data.error) {
       console.error(`API error for ${fileName}:`, data.error?.message || response.status);
-      return [];
+      return generateFallbackAnnotations(lineCount);
     }
     
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
       console.error(`Invalid response for ${fileName}`);
-      return [];
+      return generateFallbackAnnotations(lineCount);
     }
     
     let responseText = data.choices[0].message.content.trim();
-    
     const jsonMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (jsonMatch) {
       responseText = jsonMatch[1].trim();
@@ -70,18 +88,151 @@ PROVIDE 15-20 ANNOTATIONS COVERING ALL SECTIONS!`
     if (arrayMatch) {
       responseText = arrayMatch[1];
     }
-    
+
     responseText = responseText
       .replace(/[\r\n]+/g, ' ')
       .replace(/\s+/g, ' ')
       .replace(/"\s*,\s*"/g, '","')
-      .replace(/}\s*,\s*{/g, '},{');
+      .replace(/}\s*,\s*{/g, '},{')
+      .replace(/\[\s*/g, '[')
+      .replace(/\s*\]/g, ']')
+      .replace(/{\s*/g, '{')
+      .replace(/\s*}/g, '}');
     
-    return JSON.parse(responseText);
+    let annotations;
+    try {
+      annotations = JSON.parse(responseText);
+      if (!Array.isArray(annotations)) {
+        throw new Error("Response is not an array");
+      }
+      
+      annotations = annotations.filter(ann => 
+        ann.lineStart && ann.lineEnd && ann.annotation && ann.type
+      );
+      
+    } catch (parseError) {
+      console.error("JSON Parse Error:", parseError);
+      console.error("Failed to parse:", responseText.substring(0, 500));
+      try {
+        const lines = responseText.split(/(?<=}),(?={)/);
+        annotations = lines
+          .map(line => {
+            try {
+              const cleaned = line.trim().replace(/^[\[\{]|[\]\}]$/g, '');
+              if (cleaned) {
+                return JSON.parse('{' + cleaned.replace(/^{|}$/g, '') + '}');
+              }
+            } catch (e) {
+              return null;
+            }
+          })
+          .filter(a => a !== null && a.lineStart && a.lineEnd);
+      } catch (recoveryError) {
+        console.error("Recovery failed, using fallback annotations");
+        annotations = generateFallbackAnnotations(lineCount);
+      }
+    }
+    const maxLineInAnnotations = annotations.length > 0 
+      ? Math.max(...annotations.map(a => a.lineEnd))
+      : 0;
+    
+    const coverage = (maxLineInAnnotations / lineCount) * 100;
+    console.log(`${fileName}: ${annotations.length} annotations, ${coverage.toFixed(1)}% coverage (line ${maxLineInAnnotations}/${lineCount})`);
+    const sectionSize = lineCount / 5;
+    const sectionsWithAnnotations = [0, 0, 0, 0, 0];
+    annotations.forEach(ann => {
+      const section = Math.min(Math.floor(ann.lineStart / sectionSize), 4);
+      sectionsWithAnnotations[section]++;
+    });
+    
+    const emptySections = sectionsWithAnnotations.filter(count => count === 0).length;
+    const clusteringDetected = emptySections >= 2 || maxLineInAnnotations < lineCount * 0.8;
+    
+    if (clusteringDetected) {
+      console.warn(`${fileName}: Clustering detected. Section distribution: [${sectionsWithAnnotations.join(', ')}]. Adding strategic annotations.`);
+      const strategicAnnotations = generateStrategicAnnotations(lineCount, annotations, truncated);
+      annotations = [...annotations, ...strategicAnnotations];
+      annotations.sort((a, b) => a.lineStart - b.lineStart);
+    }
+    
+    return annotations;
   } catch (error) {
     console.error(`Annotation error for ${fileName}:`, error.message);
-    return [];
+    return generateFallbackAnnotations(truncated ? truncated.split('\n').length : 100);
   }
+}
+
+function generateFallbackAnnotations(lineCount, startAfter = 0) {
+  const annotations = [];
+  const sections = 5;
+  
+  for (let i = 0; i < sections; i++) {
+    const sectionStart = Math.floor((lineCount / sections) * i) + 1;
+    const sectionEnd = Math.floor((lineCount / sections) * (i + 1));
+    
+    if (sectionStart > startAfter) {
+      annotations.push({
+        lineStart: sectionStart,
+        lineEnd: Math.min(sectionStart + 8, sectionEnd),
+        annotation: `Code section ${i + 1} (lines ${sectionStart}-${sectionEnd}). Click to expand for detailed analysis.`,
+        type: "info",
+        isExpandable: true
+      });
+    }
+  }
+  
+  return annotations;
+}
+
+function generateStrategicAnnotations(lineCount, existingAnnotations, content) {
+  const annotations = [];
+  const sectionSize = lineCount / 5;
+  const lines = content.split('\n');
+  
+  const sectionsWithAnnotations = [false, false, false, false, false];
+  existingAnnotations.forEach(ann => {
+    const section = Math.min(Math.floor(ann.lineStart / sectionSize), 4);
+    sectionsWithAnnotations[section] = true;
+  });
+  
+  for (let section = 0; section < 5; section++) {
+    if (!sectionsWithAnnotations[section]) {
+      const sectionStart = Math.floor(sectionSize * section);
+      const sectionEnd = Math.floor(sectionSize * (section + 1));
+      const midPoint = Math.floor((sectionStart + sectionEnd) / 2);
+      
+      const sampleStart = Math.max(0, sectionStart);
+      const sampleEnd = Math.min(lines.length, sectionEnd);
+      const sampleLines = lines.slice(sampleStart, Math.min(sampleStart + 10, sampleEnd));
+      
+      let annotationType = "info";
+      let annotationText = `Code section ${section + 1}`;
+      
+      if (sampleLines.some(line => line.includes('function ') || line.includes('const ') || line.includes('async '))) {
+        annotationType = "function";
+        annotationText = `Function definitions and logic (lines ${sectionStart + 1}-${sectionEnd})`;
+      } else if (sampleLines.some(line => line.includes('class ') || line.includes('interface '))) {
+        annotationType = "class";
+        annotationText = `Class or type definitions (lines ${sectionStart + 1}-${sectionEnd})`;
+      } else if (sampleLines.some(line => line.includes('import ') || line.includes('require('))) {
+        annotationType = "info";
+        annotationText = `Module imports and dependencies (lines ${sectionStart + 1}-${sectionEnd})`;
+      } else if (sampleLines.some(line => line.includes('export ') || line.includes('module.exports'))) {
+        annotationType = "important";
+        annotationText = `Module exports and API surface (lines ${sectionStart + 1}-${sectionEnd})`;
+      }
+      
+      annotations.push({
+        lineStart: Math.max(1, midPoint - 5),
+        lineEnd: Math.min(lineCount, midPoint + 5),
+        annotation: annotationText + ". Click to expand for detailed analysis.",
+        type: annotationType,
+        isExpandable: true
+      });
+    }
+  }
+  
+  return annotations;
 }
 
 export async function POST(req) {

@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import ExpandAnnotationModal from "@/components/ExpandAnnotationModal";
+import CodeQuestionModal from "@/components/CodeQuestionModal";
 
 interface Annotation {
   lineStart: number;
   lineEnd: number;
   annotation: string;
   type: "info" | "function" | "class" | "important" | "warning";
+  isExpandable?: boolean;
 }
 
 interface FileItem {
@@ -26,16 +29,89 @@ interface RepoData {
   files: FileItem[];
 }
 
+interface SelectionData {
+  text: string;
+  lineStart: number;
+  lineEnd: number;
+}
+
 export default function CodeViewer() {
   const [repoUrl, setRepoUrl] = useState("");
   const [repoData, setRepoData] = useState<RepoData | null>(null);
   const [loadingRepo, setLoadingRepo] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState("");
+  const [fileLanguage, setFileLanguage] = useState("javascript");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [loadingFile, setLoadingFile] = useState(false);
   const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [expandModalOpen, setExpandModalOpen] = useState(false);
+  const [selectedAnnotation, setSelectedAnnotation] = useState<Annotation | null>(null);
+  const [questionModalOpen, setQuestionModalOpen] = useState(false);
+  const [selection, setSelection] = useState<SelectionData | null>(null);
+  const [showSelectionButton, setShowSelectionButton] = useState(false);
+  const questionModalOpenRef = useRef(questionModalOpen);
+  const isHoveringButtonRef = useRef(false);
+
+  useEffect(() => {
+    questionModalOpenRef.current = questionModalOpen;
+  }, [questionModalOpen]);
+
+  useEffect(() => {
+    if (!fileContent) return;
+
+    const handleSelection = () => {
+      if (questionModalOpenRef.current || isHoveringButtonRef.current) return;
+
+      setTimeout(() => {
+        const sel = window.getSelection();
+        const selectedText = sel?.toString() || "";
+        
+        console.log("=== SELECTION EVENT ===");
+        console.log("Text length:", selectedText.length);
+        console.log("Text preview:", selectedText.substring(0, 50));
+        
+        if (selectedText.trim().length > 3) {
+          const trimmed = selectedText.trim();
+          const lines = fileContent.split('\n');
+          let lineStart = 1;
+          let lineEnd = 1;
+          
+          for (let i = 0; i < lines.length; i++) {
+            const firstLine = trimmed.split('\n')[0].trim();
+            if (firstLine && lines[i].trim().includes(firstLine)) {
+              lineStart = i + 1;
+              lineEnd = lineStart + trimmed.split('\n').length - 1;
+              break;
+            }
+          }
+
+          console.log("Setting selection:", lineStart, "-", lineEnd);
+          setSelection({
+            text: trimmed,
+            lineStart,
+            lineEnd
+          });
+          setShowSelectionButton(true);
+        } else {
+          console.log("Clearing selection");
+          setSelection(null);
+          setShowSelectionButton(false);
+        }
+      }, 100);
+    };
+
+    console.log("Adding selection listeners");
+    document.addEventListener('mouseup', handleSelection);
+    document.addEventListener('selectionchange', handleSelection);
+    
+    return () => {
+      console.log("Removing selection listeners");
+      document.removeEventListener('mouseup', handleSelection);
+      document.removeEventListener('selectionchange', handleSelection);
+    };
+  }, [fileContent]);
 
   const handleLoadRepo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,6 +160,7 @@ export default function CodeViewer() {
 
       setFileContent(data.fileContent);
       setAnnotations(data.annotations);
+      setFileLanguage(data.language || getLanguage(filePath));
     } catch (error) {
       alert("Error: " + (error as Error).message);
     } finally {
@@ -103,6 +180,16 @@ export default function CodeViewer() {
   };
 
   const codeLines = fileContent.split("\n");
+
+  const lineAnnotationMap = useMemo(() => {
+    const map = new Map<number, number>();
+    annotations.forEach((ann, idx) => {
+      for (let line = ann.lineStart; line <= ann.lineEnd; line++) {
+        map.set(line, idx);
+      }
+    });
+    return map;
+  }, [annotations]);
 
   const filteredFiles = repoData?.files.filter(f => 
     f.path.toLowerCase().includes(searchTerm.toLowerCase())
@@ -132,7 +219,13 @@ export default function CodeViewer() {
     return langMap[ext || ""] || "javascript";
   };
 
+  const handleExpandAnnotation = (ann: Annotation) => {
+    setSelectedAnnotation(ann);
+    setExpandModalOpen(true);
+  };
+
   return (
+    <>
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <div className="container mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-6">
@@ -216,12 +309,13 @@ export default function CodeViewer() {
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
                 </div>
               ) : selectedFile && fileContent ? (
-                <div className="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 overflow-hidden">
-                  <div className="bg-slate-800/50 px-4 py-2 border-b border-white/10">
-                    <h2 className="text-white font-mono text-sm">{selectedFile}</h2>
-                  </div>
+                <>
+                  <div className="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 overflow-hidden">
+                    <div className="bg-slate-800/50 px-4 py-2 border-b border-white/10">
+                      <h2 className="text-white font-mono text-sm">{selectedFile}</h2>
+                    </div>
 
-                  <div className="grid lg:grid-cols-2 gap-0">
+                    <div className="grid lg:grid-cols-2 gap-0">
                     <div className="border-r border-white/10">
                       <div className="bg-slate-900/50 px-3 py-2 border-b border-white/10">
                         <span className="text-slate-400 text-xs font-semibold uppercase">Code</span>
@@ -242,33 +336,6 @@ export default function CodeViewer() {
                             paddingRight: '1em',
                             color: '#6b7280',
                             userSelect: 'none',
-                          }}
-                          wrapLines={true}
-                          lineProps={(lineNumber) => {
-                            const hasAnnotation = annotations.find(
-                              (a) => lineNumber >= a.lineStart && lineNumber <= a.lineEnd
-                            );
-                            const isActive = activeAnnotation !== null && 
-                              lineNumber >= annotations[activeAnnotation].lineStart && 
-                              lineNumber <= annotations[activeAnnotation].lineEnd;
-                            
-                            return {
-                              style: {
-                                display: 'block',
-                                backgroundColor: isActive ? 'rgba(168, 85, 247, 0.1)' : 
-                                                hasAnnotation ? 'rgba(168, 85, 247, 0.05)' : 'transparent',
-                                borderLeft: hasAnnotation ? '2px solid rgb(168, 85, 247)' : 'none',
-                                paddingLeft: hasAnnotation ? '0.5rem' : '0',
-                              },
-                              onMouseEnter: () => {
-                                if (hasAnnotation) {
-                                  const annIdx = annotations.findIndex(
-                                    (a) => lineNumber >= a.lineStart && lineNumber <= a.lineEnd
-                                  );
-                                  setActiveAnnotation(annIdx);
-                                }
-                              },
-                            };
                           }}
                         >
                           {fileContent}
@@ -297,9 +364,20 @@ export default function CodeViewer() {
                                 <span className="text-xs font-mono text-slate-300">
                                   Lines {ann.lineStart}-{ann.lineEnd}
                                 </span>
-                                <span className="text-xs px-2 py-0.5 rounded bg-white/10 capitalize">
-                                  {ann.type}
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs px-2 py-0.5 rounded bg-white/10 capitalize">
+                                    {ann.type}
+                                  </span>
+                                  {ann.isExpandable && (
+                                    <button
+                                      onClick={() => handleExpandAnnotation(ann)}
+                                      className="text-xs px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+                                      title="Expand for detailed analysis"
+                                    >
+                                      Expand
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                               <p className="text-sm leading-relaxed">{ann.annotation}</p>
                             </div>
@@ -312,7 +390,10 @@ export default function CodeViewer() {
                       </div>
                     </div>
                   </div>
-                </div>
+                  </div>
+                  
+
+                </>
               ) : (
                 <div className="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 p-12 text-center">
                   <h3 className="text-white text-xl font-semibold mb-2">Select a file to view</h3>
@@ -330,6 +411,74 @@ export default function CodeViewer() {
           </div>
         )}
       </div>
+
+      {selectedFile && fileContent && (
+        <div 
+          style={{ position: 'fixed', bottom: '32px', right: '32px', zIndex: 99999 }}
+          className="flex flex-col gap-2"
+          onMouseEnter={() => isHoveringButtonRef.current = true}
+          onMouseLeave={() => isHoveringButtonRef.current = false}
+        >
+          <button
+            onClick={() => {
+              setSelection({
+                text: "test selection",
+                lineStart: 1,
+                lineEnd: 5
+              });
+              setQuestionModalOpen(true);
+            }}
+            style={{ backgroundColor: '#16a34a', color: 'white', padding: '16px 32px', fontSize: '20px', fontWeight: 'bold', border: '4px solid white', borderRadius: '8px' }}
+          >
+            🤖 ASK AI ABOUT CODE
+          </button>
+          {showSelectionButton && selection && (
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col gap-2 border-4 border-white">
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold uppercase tracking-wide">Text Selected</span>
+                <span className="text-lg font-bold">Lines {selection.lineStart}-{selection.lineEnd}</span>
+              </div>
+              <button
+                onClick={() => setQuestionModalOpen(true)}
+                className="px-6 py-3 bg-white text-blue-600 hover:bg-gray-100 rounded-xl font-black text-lg transition-all transform hover:scale-105 shadow-xl"
+              >
+                ASK AI
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedAnnotation && (
+        <ExpandAnnotationModal
+          isOpen={expandModalOpen}
+          onClose={() => {
+            setExpandModalOpen(false);
+            setSelectedAnnotation(null);
+          }}
+          annotation={selectedAnnotation}
+          fileContent={fileContent}
+          fileName={selectedFile || ""}
+          language={fileLanguage}
+        />
+      )}
+
+      {selection && (
+        <CodeQuestionModal
+          isOpen={questionModalOpen}
+          onClose={() => {
+            setQuestionModalOpen(false);
+            setSelection(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          selectedCode={selection.text}
+          lineStart={selection.lineStart}
+          lineEnd={selection.lineEnd}
+          fileName={selectedFile || ""}
+          language={fileLanguage}
+        />
+      )}
     </div>
+    </>
   );
 }

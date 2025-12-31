@@ -1,7 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 const conversationSessions = new Map();
 
 const SYSTEM_PROMPT = `You are an elite-tier AI code analyst with capabilities matching GitHub Copilot's advanced analysis features. Your expertise includes:
@@ -64,39 +60,38 @@ export async function POST(req) {
     }
 
     const enhancedMessage = enhancePrompt(message, analysisDepth, includeSecurityAudit);
+    const messages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history.map(h => ({
+        role: h.role === "model" ? "assistant" : h.role,
+        content: h.parts?.[0]?.text || h.content
+      })),
+      { role: "user", content: enhancedMessage }
+    ];
 
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
-      generationConfig: {
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 8192,
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "AI Code Analyzer",
       },
-      safetySettings: [
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-      ],
+      body: JSON.stringify({
+        model: "mistralai/devstral-2512:free",
+        messages,
+        temperature: 0.7,
+        max_tokens: 4000
+      })
     });
 
-    const chat = model.startChat({
-      history: [
-        {
-          role: "user",
-          parts: [{ text: SYSTEM_PROMPT }],
-        },
-        {
-          role: "model",
-          parts: [{ text: "Understood. I'm ready to provide elite-level code analysis with deep technical insights, security auditing, and actionable recommendations. Share any code, repository, or technical question for comprehensive analysis." }],
-        },
-        ...history,
-      ],
-    });
+    const data = await response.json();
+    
+    if (!response.ok || data.error) {
+      throw new Error(data.error?.message || `API error: ${response.status}`);
+    }
 
-    const result = await chat.sendMessage(enhancedMessage);
-    const reply = result.response.text();
+    const reply = data.choices?.[0]?.message?.content || "No response generated";
 
     history.push(
       { role: "user", parts: [{ text: enhancedMessage }] },
@@ -112,7 +107,6 @@ export async function POST(req) {
         sessionId: sessionKey,
         metadata: {
           analysisDepth,
-          tokensUsed: result.response.usageMetadata?.totalTokenCount || 0,
         }
       }),
       { headers: { "Content-Type": "application/json" } }
@@ -227,16 +221,29 @@ ${userQuestion}
 Be thorough and technical. Provide production-grade insights.
 `;
 
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 8192,
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "AI Code Analyzer",
       },
+      body: JSON.stringify({
+        model: "mistralai/devstral-2512:free",
+        messages: [{ role: "user", content: repoContext }],
+        temperature: 0.7,
+        max_tokens: 4000
+      })
     });
 
-    const result = await model.generateContent(repoContext);
-    return result.response.text();
+    const data = await response.json();
+    
+    if (!response.ok || data.error) {
+      throw new Error(data.error?.message || `API error: ${response.status}`);
+    }
+
+    return data.choices?.[0]?.message?.content || "No analysis generated";
 
   } catch (error) {
     console.error("Error analyzing GitHub repo:", error);

@@ -18,11 +18,11 @@ export async function POST(req) {
         "X-Title": "AI Code Analyzer",
       },
       body: JSON.stringify({
-        model: "kwaipilot/kat-coder-pro:free",
+        model: "mistralai/devstral-2512:free",
         messages: [
           {
             role: "user",
-            content: `Summarize this GitHub repository in EXACTLY 100 words or less. Be concise and informative.
+            content: `Summarize this GitHub repository concisely in plain text. Do NOT use any markdown formatting (no **, no \`, no #). Just write normal sentences.
 
 Repository: ${repoData.owner}/${repoData.repo}
 Description: ${repoData.description || 'No description'}
@@ -34,7 +34,7 @@ Top Languages: ${repoData.analysis.languages.slice(0, 3).map(l => `${l.name} (${
 Key Files:
 ${repoData.files.slice(0, 10).map(f => `- ${f.path}`).join('\n')}
 
-Provide a concise summary covering: purpose, tech stack, key features, and architecture. Maximum 100 words.`
+Provide a concise summary covering: purpose, tech stack, key features, and architecture. Write in plain text only, no markdown, no word count.`
           }
         ]
       })
