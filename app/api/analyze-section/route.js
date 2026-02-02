@@ -56,7 +56,7 @@ Be specific and reference actual code elements.`;
         "X-Title": "AI Code Analyzer",
       },
       body: JSON.stringify({
-        model: "mistralai/devstral-2512:free",
+        model: "openai/gpt-oss-120b",
         messages: [
           {
             role: "user",

@@ -78,7 +78,7 @@ export async function POST(req) {
         "X-Title": "AI Code Analyzer",
       },
       body: JSON.stringify({
-        model: "mistralai/devstral-2512:free",
+        model: "openai/gpt-oss-120b",
         messages,
         temperature: 0.7,
         max_tokens: 4000
@@ -230,7 +230,7 @@ Be thorough and technical. Provide production-grade insights.
         "X-Title": "AI Code Analyzer",
       },
       body: JSON.stringify({
-        model: "mistralai/devstral-2512:free",
+        model: "openai/gpt-oss-120b",
         messages: [{ role: "user", content: repoContext }],
         temperature: 0.7,
         max_tokens: 4000
